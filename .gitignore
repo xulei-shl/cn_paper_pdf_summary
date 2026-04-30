@@ -6,3 +6,4 @@ outputs/
 backup/
 logs/
 download/
+**/playwright_user_data/
