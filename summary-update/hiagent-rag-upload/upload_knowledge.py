@@ -12,14 +12,13 @@ import sys
 import time
 from pathlib import Path
 
+from camoufox.sync_api import Camoufox
 from dotenv import load_dotenv
-from playwright.sync_api import sync_playwright
 
 # 导入登录状态管理模块
 from session_manager import export_session
 
 # 加载 .env 文件（从根目录加载）
-from pathlib import Path
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 
@@ -37,6 +36,8 @@ def parse_headless(value):
     """解析 headless 参数"""
     if isinstance(value, bool):
         return value
+    if value.lower() == 'virtual':
+        return 'virtual'
     return value.lower() in ('true', '1', 'yes', 'on')
 
 
@@ -129,6 +130,36 @@ def get_knowledge_config():
     return workspace_type, workspace_id, knowledge_id
 
 
+def get_camoufox_os() -> str:
+    """获取 Camoufox 目标操作系统"""
+    if sys.platform.startswith('win'):
+        return 'windows'
+    if sys.platform == 'darwin':
+        return 'macos'
+    return 'linux'
+
+
+def launch_persistent_browser(headless, user_data_dir: Path):
+    """
+    启动 Camoufox 持久化上下文
+
+    Args:
+        headless: 浏览器启动模式
+        user_data_dir: 浏览器用户数据目录
+
+    Returns:
+        BrowserContext: 持久化浏览器上下文
+    """
+    return Camoufox(
+        persistent_context=True,
+        user_data_dir=str(user_data_dir),
+        headless=headless,
+        os=get_camoufox_os(),
+        geoip=False,
+        humanize=False,
+    )
+
+
 def wait_for_login_success(page, timeout: int = 300000):
     """
     等待用户登录成功
@@ -150,6 +181,33 @@ def wait_for_login_success(page, timeout: int = 300000):
     print("检测到登录成功")
 
 
+def confirm_login_and_export(page):
+    """
+    等待用户在命令行确认登录完成
+
+    Args:
+        page: Playwright 页面对象
+    """
+    print("请在浏览器中手动完成登录。")
+    print("登录完成后回到终端，按回车保存登录状态并关闭浏览器；输入 q 放弃。")
+
+    while True:
+        try:
+            user_input = input("确认已登录后按回车继续：").strip().lower()
+        except EOFError as exc:
+            raise RuntimeError("当前终端不可交互，无法手动确认登录结果") from exc
+
+        if not user_input:
+            page.reload(wait_until="networkidle", timeout=60000)
+            time.sleep(1)
+            return
+
+        if user_input == 'q':
+            raise RuntimeError("用户已取消保存登录状态")
+
+        print("无效输入，请直接按回车继续，或输入 q 取消。")
+
+
 def login_and_export(headless: bool = True):
     """
     仅执行登录检测并导出登录状态
@@ -164,13 +222,7 @@ def login_and_export(headless: bool = True):
     user_data_dir = Path(__file__).parent / "playwright_user_data"
     user_data_dir.mkdir(exist_ok=True)
 
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir,
-            headless=headless,
-            args=['--disable-blink-features=AutomationControlled']
-        )
-
+    with launch_persistent_browser(headless, user_data_dir) as context:
         page = context.pages[0] if context.pages else context.new_page()
 
         try:
@@ -178,7 +230,7 @@ def login_and_export(headless: bool = True):
             page.goto(url, wait_until="networkidle", timeout=60000)
             time.sleep(2)
 
-            wait_for_login_success(page)
+            confirm_login_and_export(page)
 
             print("正在导出登录状态...")
             export_session()
@@ -192,9 +244,6 @@ def login_and_export(headless: bool = True):
             page.screenshot(path=str(screenshot_path))
             print(f"错误截图已保存: {screenshot_path}")
             raise
-
-        finally:
-            context.close()
 
 
 def delete_uploaded_file(file_path: str, delete: bool = True):
@@ -258,14 +307,7 @@ def upload_to_knowledge(file_path: str, headless: bool = True, auto_export: bool
     user_data_dir = Path(__file__).parent / "playwright_user_data"
     user_data_dir.mkdir(exist_ok=True)
     
-    with sync_playwright() as p:
-        # 启动浏览器（使用持久化上下文保存登录状态）
-        context = p.chromium.launch_persistent_context(
-            user_data_dir,
-            headless=headless,
-            args=['--disable-blink-features=AutomationControlled']
-        )
-        
+    with launch_persistent_browser(headless, user_data_dir) as context:
         page = context.pages[0] if context.pages else context.new_page()
         
         try:
@@ -445,11 +487,6 @@ def upload_to_knowledge(file_path: str, headless: bool = True, auto_export: bool
             page.screenshot(path=str(screenshot_path))
             print(f"错误截图已保存: {screenshot_path}")
             raise
-            
-        finally:
-            # 关闭浏览器
-            # print("关闭浏览器...")
-            context.close()
 
 
 if __name__ == "__main__":
