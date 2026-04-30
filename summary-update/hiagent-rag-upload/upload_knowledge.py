@@ -3,6 +3,7 @@
 """
 知识库文档上传脚本
 使用 Playwright 自动化上传 Markdown 文件到知识库
+增加独立登录命令，用于登录 HiAgent 并导出会话状态
 """
 
 import argparse
