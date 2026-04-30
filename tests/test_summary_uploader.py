@@ -1,10 +1,12 @@
 import tempfile
 import unittest
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import main
-from utils.summary_uploader import upload_all
+from utils.api_queue import QueueManager
+from utils.summary_uploader import load_env, upload_all
 
 
 class TestSummaryUploader(unittest.IsolatedAsyncioTestCase):
@@ -42,6 +44,65 @@ class TestSummaryUploader(unittest.IsolatedAsyncioTestCase):
         self.assertIn("lis_rss", result["_skipped"])
         self.assertEqual(result["_skip_reasons"]["lis_rss"], "配置禁用")
         mock_blinko.assert_awaited_once()
+
+
+class TestEnvReload(unittest.TestCase):
+    def test_load_env_removes_deleted_key(self):
+        env_name = "TELEGRAM_NOTIFY_CHAT_ID"
+        old_value = os.environ.get(env_name)
+
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                env_path = Path(temp_dir) / ".env"
+                env_path.write_text(f"{env_name}=123456\n", encoding="utf-8")
+
+                with patch(
+                    "utils.summary_uploader._get_env_file_paths",
+                    return_value=[env_path],
+                ):
+                    load_env()
+                    self.assertEqual(os.environ.get(env_name), "123456")
+
+                    env_path.write_text("PDF_SUMMARY_PUSH_TELEGRAM_RESULT=true\n", encoding="utf-8")
+                    load_env()
+                    self.assertNotIn(env_name, os.environ)
+        finally:
+            if old_value is None:
+                os.environ.pop(env_name, None)
+            else:
+                os.environ[env_name] = old_value
+
+
+class TestQueueManagerConfigReload(unittest.TestCase):
+    def test_queue_manager_reloads_config_after_file_change(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text(
+                "storage:\n"
+                "  download_root: download\n"
+                "  logs_root: logs\n"
+                "summary_upload:\n"
+                "  hiagent_rag:\n"
+                "    enabled: true\n",
+                encoding="utf-8",
+            )
+
+            queue_manager = QueueManager(config_path=str(config_path))
+            first_config = queue_manager._ensure_config()
+            self.assertTrue(first_config["summary_upload"]["hiagent_rag"]["enabled"])
+
+            config_path.write_text(
+                "storage:\n"
+                "  download_root: download\n"
+                "  logs_root: logs\n"
+                "summary_upload:\n"
+                "  hiagent_rag:\n"
+                "    enabled: false\n",
+                encoding="utf-8",
+            )
+
+            second_config = queue_manager._ensure_config()
+            self.assertFalse(second_config["summary_upload"]["hiagent_rag"]["enabled"])
 
 
 class TestUploadFailureJudge(unittest.TestCase):

@@ -28,13 +28,15 @@ def load_workflow_config(config_path: str = "config/config.yaml") -> Dict:
 
 
 class QueueManager:
-    def __init__(self, max_concurrent: int = 1):
+    def __init__(self, max_concurrent: int = 1, config_path: str = "config/config.yaml"):
         self.queue: asyncio.Queue = asyncio.Queue()
         self.results: Dict[str, Dict] = {}
         self.events: Dict[str, asyncio.Event] = {}
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self._worker_task: Optional[asyncio.Task] = None
         self._config: Optional[Dict] = None
+        self._config_path = Path(config_path)
+        self._config_mtime_ns: Optional[int] = None
         self._logger_initialized = False
 
     def _ensure_worker(self):
@@ -43,9 +45,25 @@ class QueueManager:
             self._worker_initialized = True
 
     def _ensure_config(self) -> Dict:
-        if self._config is None:
-            self._config = load_workflow_config()
+        current_mtime_ns = self._get_config_mtime_ns()
+        if self._config is None or self._config_mtime_ns != current_mtime_ns:
+            self._config = load_workflow_config(str(self._config_path))
+            self._config_mtime_ns = current_mtime_ns
         return self._config
+
+    def _get_config_mtime_ns(self) -> int:
+        """
+        获取配置文件修改时间
+
+        Returns:
+            配置文件 mtime_ns
+
+        Raises:
+            FileNotFoundError: 配置文件不存在
+        """
+        if not self._config_path.exists():
+            raise FileNotFoundError(f"配置文件不存在: {self._config_path}")
+        return self._config_path.stat().st_mtime_ns
 
     async def enqueue(self, title: str, article_id: Optional[int], push_wechat: bool = False) -> str:
         task_id = str(uuid.uuid4())

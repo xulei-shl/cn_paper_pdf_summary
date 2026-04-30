@@ -44,6 +44,8 @@ UPLOAD_LABELS = {
     "wechat": "WeChat",
 }
 
+_MANAGED_ENV_KEYS = set()
+
 
 def load_config(config_path: str = "config/config.yaml") -> Dict:
     """加载配置文件"""
@@ -56,17 +58,50 @@ def load_config(config_path: str = "config/config.yaml") -> Dict:
 
 
 def load_env():
-    """加载.env环境变量"""
-    from dotenv import load_dotenv
-    
+    """
+    加载并同步 .env 环境变量
+
+    说明：
+        长驻进程在运行期间修改 .env 后，调用方期望立即生效。
+        这里不只覆盖已有值，也会清理已从 .env 删除的旧键，避免继续沿用过期配置。
+
+    Returns:
+        当前从 .env 文件读取到的键值对
+    """
+    from dotenv import dotenv_values
+
+    global _MANAGED_ENV_KEYS
+
+    env_values: Dict[str, str] = {}
+    for env_path in _get_env_file_paths():
+        if not env_path.exists():
+            continue
+
+        for key, value in dotenv_values(env_path).items():
+            if value is not None:
+                env_values[key] = value
+
+    removed_keys = _MANAGED_ENV_KEYS - set(env_values.keys())
+    for key in removed_keys:
+        os.environ.pop(key, None)
+
+    for key, value in env_values.items():
+        os.environ[key] = value
+
+    _MANAGED_ENV_KEYS = set(env_values.keys())
+    return env_values
+
+
+def _get_env_file_paths() -> list[Path]:
+    """
+    获取 .env 文件搜索顺序
+
+    Returns:
+        按优先级从低到高排列的 .env 路径列表
+    """
     script_env_path = Path(__file__).parent.parent / ".env"
     project_env_path = Path(__file__).parent.parent.parent / ".env"
-
-    if project_env_path.exists():
-        load_dotenv(project_env_path, override=False)
-
-    if script_env_path.exists():
-        load_dotenv(script_env_path, override=True)
+    return [project_env_path, script_env_path]
 
 
 def get_env_bool(name: str, default: bool = False) -> bool:
