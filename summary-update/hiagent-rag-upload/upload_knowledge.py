@@ -87,11 +87,17 @@ def parse_args():
         action='store_true',
         help='上传成功后保留本地的 md 文件（默认行为，此标志优先级高于 --delete）'
     )
+    parser.add_argument(
+        '--login-only',
+        action='store_true',
+        help='仅执行登录检测与登录状态导出，不上传 Markdown 文件'
+    )
 
-    # 必备参数
+    # 上传模式参数
     parser.add_argument(
         'file_path',
         type=str,
+        nargs='?',
         help='要上传的 Markdown 文件路径'
     )
 
@@ -106,6 +112,88 @@ def build_url(workspace_type: str, workspace_id: str, knowledge_id: str) -> str:
 def wait_for_element(page, selector: str, timeout: int = 30000):
     """等待元素出现"""
     return page.wait_for_selector(selector, timeout=timeout)
+
+
+def get_knowledge_config():
+    """获取知识库相关配置"""
+    workspace_type = args.workspace_type or get_env_var('WorkspaceType', 'personal')
+    workspace_id = args.workspace_id or get_env_var('WorkspaceID')
+    knowledge_id = args.knowledge_id or get_env_var('DatasetID')
+
+    if not workspace_id:
+        raise ValueError("缺少 WorkspaceID 参数，请通过 --workspace-id 指定或设置环境变量 WORKSPACE_ID")
+    if not knowledge_id:
+        raise ValueError("缺少 knowledge_id 参数，请通过 --knowledge-id 指定或设置环境变量 DATASET_ID")
+
+    return workspace_type, workspace_id, knowledge_id
+
+
+def wait_for_login_success(page, timeout: int = 300000):
+    """
+    等待用户登录成功
+
+    Args:
+        page: Playwright 页面对象
+        timeout: 等待超时时间，单位毫秒
+    """
+    import_button = page.locator('button:has-text("导入文件")').first
+
+    try:
+        import_button.wait_for(state='visible', timeout=5000)
+        print("检测到当前已处于登录状态")
+        return
+    except Exception:
+        print("未检测到登录状态，请在浏览器中手动完成登录...")
+
+    import_button.wait_for(state='visible', timeout=timeout)
+    print("检测到登录成功")
+
+
+def login_and_export(headless: bool = True):
+    """
+    仅执行登录检测并导出登录状态
+
+    Args:
+        headless: 是否使用 headless 模式
+    """
+    workspace_type, workspace_id, knowledge_id = get_knowledge_config()
+    url = build_url(workspace_type, workspace_id, knowledge_id)
+    print(f"目标 URL: {url}")
+
+    user_data_dir = Path(__file__).parent / "playwright_user_data"
+    user_data_dir.mkdir(exist_ok=True)
+
+    with sync_playwright() as p:
+        context = p.chromium.launch_persistent_context(
+            user_data_dir,
+            headless=headless,
+            args=['--disable-blink-features=AutomationControlled']
+        )
+
+        page = context.pages[0] if context.pages else context.new_page()
+
+        try:
+            print("正在打开页面...")
+            page.goto(url, wait_until="networkidle", timeout=60000)
+            time.sleep(2)
+
+            wait_for_login_success(page)
+
+            print("正在导出登录状态...")
+            export_session()
+            print("登录状态导出完成")
+
+            return True
+
+        except Exception as e:
+            print(f"登录状态导出过程中出错: {e}")
+            screenshot_path = Path(__file__).parent / "error_screenshot.png"
+            page.screenshot(path=str(screenshot_path))
+            print(f"错误截图已保存: {screenshot_path}")
+            raise
+
+        finally:
+            context.close()
 
 
 def delete_uploaded_file(file_path: str, delete: bool = True):
@@ -150,14 +238,7 @@ def upload_to_knowledge(file_path: str, headless: bool = True, auto_export: bool
         delete: 上传成功后是否删除本地的 md 文件，默认 True（删除）
     """
     # 获取参数
-    workspace_type = args.workspace_type or get_env_var('WorkspaceType', 'personal')
-    workspace_id = args.workspace_id or get_env_var('WorkspaceID')
-    knowledge_id = args.knowledge_id or get_env_var('DatasetID')
-    
-    if not workspace_id:
-        raise ValueError("缺少 WorkspaceID 参数，请通过 --workspace-id 指定或设置环境变量 WORKSPACE_ID")
-    if not knowledge_id:
-        raise ValueError("缺少 knowledge_id 参数，请通过 --knowledge-id 指定或设置环境变量 DATASET_ID")
+    workspace_type, workspace_id, knowledge_id = get_knowledge_config()
     
     # 构建 URL
     url = build_url(workspace_type, workspace_id, knowledge_id)
@@ -377,8 +458,15 @@ if __name__ == "__main__":
     delete = args.delete and not args.no_delete
 
     try:
-        upload_to_knowledge(args.file_path, args.headless, args.auto_export, delete)
-        print("\n✅ 任务完成！文件已成功上传到知识库。")
+        if args.login_only:
+            login_and_export(args.headless)
+            print("\n✅ 任务完成！登录状态已成功保存。")
+        else:
+            if not args.file_path:
+                raise ValueError("上传模式缺少 Markdown 文件路径，请传入 file_path 或使用 --login-only")
+
+            upload_to_knowledge(args.file_path, args.headless, args.auto_export, delete)
+            print("\n✅ 任务完成！文件已成功上传到知识库。")
         sys.exit(0)
     except Exception as e:
         print(f"\n❌ 任务失败: {e}")
