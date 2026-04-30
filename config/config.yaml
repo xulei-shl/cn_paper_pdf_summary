@@ -41,7 +41,7 @@ summary_upload:
   
   # Memos上传
   memos:
-    enabled: false
+    enabled: true
     script: "summary-update/memos/memos_client.py"
 
   # Blinko上传

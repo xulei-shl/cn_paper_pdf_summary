@@ -16,6 +16,7 @@ from utils.notifier import (
     dispatch_error_notification,
     dispatch_success_notifications,
 )
+from utils.summary_uploader import get_env_bool
 import yaml
 
 
@@ -268,7 +269,7 @@ class QueueManager:
                 source_name=source_name,
                 config=config,
                 skip_lis_rss=skip_lis_rss,
-                skip_wechat=True
+                skip_wechat=not (push_wechat or get_env_bool("PDF_SUMMARY_PUSH_WECHAT", False))
             )
             result["stages"]["upload"] = upload_results
         except Exception as e:
