@@ -12,6 +12,7 @@ config({ path: resolve(dirname(fileURLToPath(import.meta.url)), '..', '.env') })
 import { ProxyAgent } from 'undici';
 import { log } from './logger.js';
 import { parsePaperCommand } from './command-parser.js';
+import { resolveApiBaseUrl } from './api-config.js';
 
 const TELEGRAM_API_BASE = 'https://api.telegram.org';
 const DEFAULT_TIMEOUT = 300;
@@ -158,7 +159,7 @@ class PaperTelegramBot {
     }
 
     this.allowedUserId = process.env.TELEGRAM_USER_ID;
-    this.apiBaseUrl = process.env.TELEGRAM_API_URL || 'http://localhost:8081';
+    this.apiBaseUrl = resolveApiBaseUrl(process.env);
     this.apiTimeout = parseInt(process.env.TELEGRAM_API_TIMEOUT || String(DEFAULT_TIMEOUT), 10);
 
     const httpProxy = process.env.HTTP_PROXY;

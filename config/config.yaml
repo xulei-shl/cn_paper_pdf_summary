@@ -36,12 +36,12 @@ summary_upload:
   
   # LIS-RSS系统更新
   lis_rss:
-    enabled: false
+    enabled: true
     script: "summary-update/lis-rss-summary-update/update_summary.py"
   
   # Memos上传
   memos:
-    enabled: true
+    enabled: false
     script: "summary-update/memos/memos_client.py"
 
   # Blinko上传

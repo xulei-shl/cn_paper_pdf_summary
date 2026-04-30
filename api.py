@@ -1,4 +1,5 @@
 import sys
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -13,6 +14,38 @@ sys.path.insert(0, str(Path(__file__).parent))
 from utils.api_queue import QueueManager
 
 queue_manager = QueueManager(max_concurrent=1)
+
+
+def get_api_bind_host() -> str:
+    """
+    获取 API 监听地址
+
+    Returns:
+        API 监听地址
+    """
+    return os.getenv("PDF_SUMMARY_API_BIND_HOST", "0.0.0.0").strip() or "0.0.0.0"
+
+
+def get_api_port() -> int:
+    """
+    获取 API 监听端口
+
+    Returns:
+        API 监听端口
+    """
+    raw_port = (os.getenv("PDF_SUMMARY_API_PORT") or "").strip()
+    if not raw_port:
+        return 8081
+
+    try:
+        port = int(raw_port)
+    except ValueError:
+        return 8081
+
+    if 0 < port <= 65535:
+        return port
+
+    return 8081
 
 
 class ProcessRequest(BaseModel):
@@ -138,7 +171,7 @@ async def health() -> HealthResponse:
 if __name__ == "__main__":
     uvicorn.run(
         "api:app",
-        host="0.0.0.0",
-        port=8081,
+        host=get_api_bind_host(),
+        port=get_api_port(),
         reload=False
     )
