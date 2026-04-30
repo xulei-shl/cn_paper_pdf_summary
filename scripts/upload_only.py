@@ -4,15 +4,14 @@
 
 功能：
 1. 从指定目录找到MD文件
-2. 只执行步骤4的异步上传到四个子系统
+2. 只执行步骤4的异步上传到五个子系统
 """
 
 import sys
-import os
 import asyncio
 import argparse
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent
@@ -20,10 +19,12 @@ sys.path.insert(0, str(project_root))
 
 # 导入工具模块
 from utils.summary_uploader import (
+    UPLOAD_SUBSYSTEMS,
+    is_all_executed_uploads_successful,
+    print_upload_summary,
     upload_all,
     load_config
 )
-from utils.logger import DailyLogger
 
 
 def find_md_file(directory: str) -> Optional[Path]:
@@ -123,14 +124,18 @@ def main():
         ))
 
         print_section("上传结果汇总")
-        print(f"  HiAgent RAG: {'✅ 成功' if upload_results['hiagent_rag'] else '❌ 失败'}")
-        print(f"  LIS-RSS:     {'✅ 成功' if upload_results['lis_rss'] else '❌ 失败'}")
-        print(f"  Memos:       {'✅ 成功' if upload_results['memos'] else '❌ 失败'}")
-        print(f"  WeChat:      {'✅ 成功' if upload_results['wechat'] else '❌ 失败'}")
-        print('='*60)
+        print_upload_summary(upload_results)
 
-        # 检查是否全部成功
-        all_success = all(upload_results.values())
+        skipped = set(upload_results.get('_skipped', []))
+        executed_count = len(UPLOAD_SUBSYSTEMS) - len(skipped)
+        all_success = is_all_executed_uploads_successful(upload_results)
+
+        if all_success and executed_count == 0:
+            print("\n[完成] 没有需要执行的上传任务，所有子系统均已跳过")
+            sys.exit(0)
+        if all_success and skipped:
+            print("\n[完成] 实际执行的上传任务全部成功，部分子系统已跳过")
+            sys.exit(0)
         if all_success:
             print("\n[成功] 所有上传任务完成")
             sys.exit(0)

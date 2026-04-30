@@ -26,7 +26,7 @@ sys.path.insert(0, str(project_root))
 from utils.pdf_downloader import create_download_directory, download_pdf
 from utils.pdf_validator import validate_and_cleanup
 from utils.pdf_summarizer import summarize_pdf
-from utils.summary_uploader import upload_all as parallel_upload
+from utils.summary_uploader import UPLOAD_SUBSYSTEMS, upload_all as parallel_upload
 from utils.notifier import (
     dispatch_error_notification,
     dispatch_success_notifications_sync,
@@ -278,11 +278,11 @@ def _is_all_upload_failed(upload_results: Optional[Dict]) -> bool:
     """
     判断并行上传是否全部失败
     
-    个别并行任务失败无所谓，但如果全部任务都失败则返回True
+    个别并行任务失败无所谓，但如果全部实际执行的任务都失败则返回True
     注意：被跳过的任务不计入失败判断
     
     Args:
-        upload_results: 上传结果字典，包含 hiagent_rag, lis_rss, memos, wechat 的布尔值，
+        upload_results: 上传结果字典，包含 hiagent_rag, lis_rss, memos, blinko, wechat 的布尔值，
                        以及 _skipped 列表记录被跳过的子系统
         
     Returns:
@@ -291,30 +291,20 @@ def _is_all_upload_failed(upload_results: Optional[Dict]) -> bool:
     if not upload_results:
         return True
     
-    # 获取被跳过的子系统列表
-    skipped = upload_results.get('_skipped', [])
-    
-    # 统计实际执行的任务中成功的数量
-    success_count = 0
-    
-    # HiAgent RAG - 总是执行
-    if 'hiagent_rag' not in skipped and upload_results.get('hiagent_rag', False):
-        success_count += 1
-    
-    # LIS-RSS
-    if 'lis_rss' not in skipped and upload_results.get('lis_rss', False):
-        success_count += 1
-    
-    # Memos - 总是执行
-    if 'memos' not in skipped and upload_results.get('memos', False):
-        success_count += 1
-    
-    # WeChat
-    if 'wechat' not in skipped and upload_results.get('wechat', False):
-        success_count += 1
-    
-    # 如果没有任何任务成功，才算全部失败
-    return success_count == 0
+    skipped = set(upload_results.get('_skipped', []))
+    executed_subsystems = [
+        subsystem for subsystem in UPLOAD_SUBSYSTEMS
+        if subsystem not in skipped
+    ]
+
+    # 全部跳过不算失败，由上层按业务需求决定是否提示。
+    if not executed_subsystems:
+        return False
+
+    return not any(
+        upload_results.get(subsystem, False)
+        for subsystem in executed_subsystems
+    )
 
 
 def process_article(article: Dict, config: Dict, daily_dir: Path, logger: DailyLogger, skip_lis_rss: bool = False, skip_wechat: bool = False) -> Dict:

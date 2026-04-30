@@ -17,7 +17,7 @@ import sys
 import os
 import re
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Dict, Optional
 import yaml
 
 # 添加 Blinko 客户端路径
@@ -33,6 +33,16 @@ try:
     WECHAT_AVAILABLE = True
 except ImportError:
     WECHAT_AVAILABLE = False
+
+
+UPLOAD_SUBSYSTEMS = ("hiagent_rag", "lis_rss", "memos", "blinko", "wechat")
+UPLOAD_LABELS = {
+    "hiagent_rag": "HiAgent RAG",
+    "lis_rss": "LIS-RSS",
+    "memos": "Memos",
+    "blinko": "Blinko",
+    "wechat": "WeChat",
+}
 
 
 def load_config(config_path: str = "config/config.yaml") -> Dict:
@@ -70,6 +80,101 @@ def get_env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
+def _is_subsystem_enabled(config: Dict, subsystem: str, default: bool = True) -> bool:
+    """
+    判断子系统是否在配置中启用
+
+    Args:
+        config: 配置字典
+        subsystem: 子系统名称
+        default: 默认启用状态
+
+    Returns:
+        是否启用
+    """
+    summary_upload = config.get("summary_upload", {})
+    subsystem_config = summary_upload.get(subsystem, {})
+    return subsystem_config.get("enabled", default)
+
+
+def _skip_subsystem(
+    subsystem: str,
+    reason: str,
+    skip_reasons: Dict[str, str]
+):
+    """
+    记录跳过原因并返回占位协程
+
+    Args:
+        subsystem: 子系统名称
+        reason: 跳过原因
+        skip_reasons: 跳过原因字典
+
+    Returns:
+        占位协程
+    """
+    print(f"[跳过] {UPLOAD_LABELS[subsystem]}: {reason}")
+    skip_reasons[subsystem] = reason
+    return asyncio.sleep(0)
+
+
+def get_upload_status_text(upload_results: Dict[str, object], subsystem: str) -> str:
+    """
+    获取子系统汇总状态文本
+
+    Args:
+        upload_results: 上传结果字典
+        subsystem: 子系统名称
+
+    Returns:
+        状态文本
+    """
+    skip_reasons = upload_results.get("_skip_reasons", {})
+    if subsystem in skip_reasons:
+        return f"⏭️ 跳过（{skip_reasons[subsystem]}）"
+
+    return "✅ 成功" if upload_results.get(subsystem, False) else "❌ 失败"
+
+
+def print_upload_summary(upload_results: Dict[str, object]) -> None:
+    """
+    打印上传结果汇总
+
+    Args:
+        upload_results: 上传结果字典
+    """
+    print(f"\n{'='*60}")
+    print("  上传结果汇总")
+    print(f"{'='*60}")
+    print(f"  HiAgent RAG: {get_upload_status_text(upload_results, 'hiagent_rag')}")
+    print(f"  LIS-RSS:     {get_upload_status_text(upload_results, 'lis_rss')}")
+    print(f"  Memos:       {get_upload_status_text(upload_results, 'memos')}")
+    print(f"  Blinko:      {get_upload_status_text(upload_results, 'blinko')}")
+    print(f"  WeChat:      {get_upload_status_text(upload_results, 'wechat')}")
+    print(f"{'='*60}")
+
+
+def is_all_executed_uploads_successful(upload_results: Dict[str, object]) -> bool:
+    """
+    判断所有实际执行的上传任务是否都成功
+
+    Args:
+        upload_results: 上传结果字典
+
+    Returns:
+        实际执行的任务是否全部成功
+    """
+    skipped = set(upload_results.get("_skipped", []))
+
+    for subsystem in UPLOAD_SUBSYSTEMS:
+        if subsystem in skipped:
+            continue
+        if not upload_results.get(subsystem, False):
+            return False
+
+    return True
+
+
 async def upload_to_hiagent_rag(md_path: str, config: Dict, delete_md: bool = True) -> bool:
     """
     上传到HiAgent RAG知识库
@@ -83,14 +188,10 @@ async def upload_to_hiagent_rag(md_path: str, config: Dict, delete_md: bool = Tr
         是否成功
     """
     print(f"\n{'='*60}")
-    print(f"  [子系统1/3] HiAgent RAG知识库上传")
+    print(f"  [子系统1/5] HiAgent RAG知识库上传")
     print(f"{'='*60}")
 
     summary_config = config.get('summary_upload', {}).get('hiagent_rag', {})
-
-    if not summary_config.get('enabled', True):
-        print("[跳过] HiAgent RAG上传已禁用")
-        return True
 
     script = summary_config.get('script', 'summary-update/hiagent-rag-upload/upload_knowledge.py')
     script_path = Path(__file__).parent.parent / script
@@ -164,14 +265,10 @@ async def upload_to_lis_rss(article_id: int, md_content: str, config: Dict) -> b
         是否成功
     """
     print(f"\n{'='*60}")
-    print(f"  [子系统2/3] LIS-RSS系统更新")
+    print(f"  [子系统2/5] LIS-RSS系统更新")
     print(f"{'='*60}")
 
     summary_config = config.get('summary_upload', {}).get('lis_rss', {})
-
-    if not summary_config.get('enabled', True):
-        print("[跳过] LIS-RSS更新已禁用")
-        return True
 
     script = summary_config.get('script', 'summary-update/lis-rss-summary-update/update_summary.py')
     script_path = Path(__file__).parent.parent / script
@@ -252,14 +349,10 @@ async def upload_to_memos(title: str, md_content: str, config: Dict) -> bool:
         是否成功
     """
     print(f"\n{'='*60}")
-    print(f"  [子系统3/3] Memos上传")
+    print(f"  [子系统3/5] Memos上传")
     print(f"{'='*60}")
 
     summary_config = config.get('summary_upload', {}).get('memos', {})
-
-    if not summary_config.get('enabled', True):
-        print("[跳过] Memos上传已禁用")
-        return True
 
     script = summary_config.get('script', 'summary-update/memos/memos_client.py')
     script_path = Path(__file__).parent.parent / script
@@ -327,14 +420,8 @@ async def upload_to_blinko(title: str, md_content: str, config: Dict) -> bool:
         是否成功
     """
     print(f"\n{'='*60}")
-    print(f"  [子系统4/4] Blinko上传")
+    print(f"  [子系统4/5] Blinko上传")
     print(f"{'='*60}")
-
-    summary_config = config.get('summary_upload', {}).get('blinko', {})
-
-    if not summary_config.get('enabled', True):
-        print("[跳过] Blinko上传已禁用")
-        return True
 
     # 读取.env配置
     load_env()
@@ -387,7 +474,7 @@ async def upload_to_wechat(
         是否成功
     """
     print(f"\n{'='*60}")
-    print(f"  [子系统4/4] 企业微信推送")
+    print(f"  [子系统5/5] 企业微信推送")
     print(f"{'='*60}")
 
     # 检查模块是否可用
@@ -397,10 +484,13 @@ async def upload_to_wechat(
 
     wechat_config = config.get('summary_upload', {}).get('wechat', {})
 
+    # 读取.env配置
+    load_env()
+
     # 从环境变量获取 webhook key 并组装完整 URL
     webhook_key = os.getenv('WECHAT_WEBHOOK_KEY')
     if not webhook_key:
-        print("[错误] 未配置 WECHATCHAT_WEBHOOK_KEY 环境变量")
+        print("[错误] 未配置 WECHAT_WEBHOOK_KEY 环境变量")
         return False
 
     webhook_url = f"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key={webhook_key}"
@@ -456,7 +546,7 @@ async def upload_all(
     source_name: Optional[str] = None,
     skip_lis_rss: bool = False,
     skip_wechat: bool = False
-) -> Dict[str, bool]:
+) -> Dict[str, object]:
     """
     并行执行所有上传子系统
 
@@ -487,7 +577,9 @@ async def upload_all(
             'lis_rss': False,
             'memos': False,
             'blinko': False,
-            'wechat': False
+            'wechat': False,
+            '_skipped': [],
+            '_skip_reasons': {}
         }
 
     md_content = md_file.read_text(encoding='utf-8')
@@ -496,30 +588,40 @@ async def upload_all(
     summary_config = config.get('summary_upload', {}).get('hiagent_rag', {})
     delete_md = summary_config.get('delete_md', True)
 
-    # 创建异步任务
-    tasks = [
-        upload_to_hiagent_rag(md_path, config, delete_md=delete_md),
-    ]
+    skip_reasons: Dict[str, str] = {}
 
-    # 只有当 skip_lis_rss 为 False 且 article_id 有效时才添加 LIS-RSS 任务
-    if skip_lis_rss:
-        print(f"[跳过] LIS-RSS上传已禁用（直接处理模式且未提供文章ID）")
-        tasks.append(asyncio.sleep(0))  # 占位符，保持结果索引一致性
+    # 创建异步任务。跳过的子系统使用占位协程保持结果索引稳定。
+    tasks = []
+
+    if _is_subsystem_enabled(config, "hiagent_rag"):
+        tasks.append(upload_to_hiagent_rag(md_path, config, delete_md=delete_md))
     else:
-        print(f"[信息] LIS-RSS上传已启用")
+        tasks.append(_skip_subsystem("hiagent_rag", "配置禁用", skip_reasons))
+
+    if skip_lis_rss:
+        tasks.append(_skip_subsystem("lis_rss", "未提供文章ID", skip_reasons))
+    elif not _is_subsystem_enabled(config, "lis_rss"):
+        tasks.append(_skip_subsystem("lis_rss", "配置禁用", skip_reasons))
+    else:
+        print("[信息] LIS-RSS上传已启用")
         tasks.append(upload_to_lis_rss(article_id, md_content, config))
 
-    tasks.append(upload_to_memos(article_title, md_content, config))
-
-    # 添加 Blinko 上传任务
-    tasks.append(upload_to_blinko(article_title, md_content, config))
-
-    # 只有当 skip_wechat 为 False 时才添加 WeChat 任务
-    if skip_wechat:
-        print(f"[跳过] WeChat推送已禁用")
-        tasks.append(asyncio.sleep(0))  # 占位符，保持结果索引一致性
+    if _is_subsystem_enabled(config, "memos"):
+        tasks.append(upload_to_memos(article_title, md_content, config))
     else:
-        print(f"[信息] WeChat推送已启用")
+        tasks.append(_skip_subsystem("memos", "配置禁用", skip_reasons))
+
+    if _is_subsystem_enabled(config, "blinko"):
+        tasks.append(upload_to_blinko(article_title, md_content, config))
+    else:
+        tasks.append(_skip_subsystem("blinko", "配置禁用", skip_reasons))
+
+    if skip_wechat:
+        tasks.append(_skip_subsystem("wechat", "本次流程未启用", skip_reasons))
+    elif not WECHAT_AVAILABLE:
+        tasks.append(_skip_subsystem("wechat", "依赖不可用", skip_reasons))
+    else:
+        print("[信息] WeChat推送已启用")
         tasks.append(upload_to_wechat(md_content, article_id, article_title, source_name, config))
 
     # 并行执行
@@ -535,11 +637,8 @@ async def upload_all(
     }
     
     # 记录哪些子系统被跳过（用于判断是否"全部失败"）
-    upload_results['_skipped'] = []
-    if skip_lis_rss:
-        upload_results['_skipped'].append('lis_rss')
-    if skip_wechat:
-        upload_results['_skipped'].append('wechat')
+    upload_results['_skipped'] = list(skip_reasons.keys())
+    upload_results['_skip_reasons'] = skip_reasons
 
     # 处理异常
     for i, result in enumerate(results):
@@ -548,21 +647,12 @@ async def upload_all(
             import traceback
             traceback.print_exception(type(result), result, result.__traceback__)
 
-    # 输出汇总
-    print(f"\n{'='*60}")
-    print(f"  上传结果汇总")
-    print(f"{'='*60}")
-    print(f"  HiAgent RAG: {'✅ 成功' if upload_results['hiagent_rag'] else '❌ 失败'}")
-    print(f"  LIS-RSS:     {'✅ 成功' if upload_results['lis_rss'] else '❌ 失败'}")
-    print(f"  Memos:       {'✅ 成功' if upload_results['memos'] else '❌ 失败'}")
-    print(f"  Blinko:      {'✅ 成功' if upload_results['blinko'] else '❌ 失败'}")
-    print(f"  WeChat:      {'✅ 成功' if upload_results['wechat'] else '❌ 失败'}")
-    print(f"{'='*60}")
+    print_upload_summary(upload_results)
 
     return upload_results
 
 
-def sync_upload_all(md_path: str, article_id: int, article_title: str, config: Dict) -> Dict[str, bool]:
+def sync_upload_all(md_path: str, article_id: int, article_title: str, config: Dict) -> Dict[str, object]:
     """
     同步版本的上传（用于非异步环境）
     

@@ -16,5 +16,5 @@ if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
 fi
 
 echo "启动 Telegram Bot..."
-nohup python -m telegram_bot.main > logs/telegram_bot.log 2>&1 &
-echo "Bot 已启动 (PID: $!)"
+cd telegram-bot
+npm start
