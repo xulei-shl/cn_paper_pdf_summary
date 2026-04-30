@@ -13,6 +13,7 @@ import { ProxyAgent } from 'undici';
 import { log } from './logger.js';
 import { parsePaperCommand } from './command-parser.js';
 import { resolveApiBaseUrl } from './api-config.js';
+import { formatProcessResponse, type ProcessApiResponse } from './response-formatter.js';
 
 const TELEGRAM_API_BASE = 'https://api.telegram.org';
 const DEFAULT_TIMEOUT = 300;
@@ -44,13 +45,6 @@ interface TelegramUpdate {
     text?: string;
     date: number;
   };
-}
-
-interface ProcessApiResponse {
-  success?: boolean;
-  stages?: Record<string, string>;
-  reason?: string;
-  md_path?: string;
 }
 
 class TelegramClient {
@@ -176,7 +170,10 @@ class PaperTelegramBot {
   }
 
   private async callApi(title: string, id?: number, pushWechat?: boolean): Promise<ProcessApiResponse> {
-    const payload: Record<string, unknown> = { title };
+    const payload: Record<string, unknown> = {
+      title,
+      request_source: 'telegram',
+    };
     if (id !== undefined) {
       payload.id = id;
     }
@@ -209,50 +206,6 @@ class PaperTelegramBot {
     } finally {
       clearTimeout(timer);
     }
-  }
-
-  private formatResponse(title: string, result: ProcessApiResponse): string {
-    const success = result.success ?? false;
-    const stages = result.stages ?? {};
-    const reason = result.reason;
-    const mdPath = result.md_path;
-
-    const lines: string[] = [];
-    lines.push(`📄 论文处理结果\n`);
-    lines.push(`标题: ${title}\n`);
-
-    if (success) {
-      lines.push('\n✅ 成功\n');
-
-      const pdfDownload = stages['pdf_download'] ?? '❓';
-      const pdfValidate = stages['pdf_validate'] ?? '❓';
-      const pdfSummary = stages['pdf_summary'] ?? '❓';
-
-      lines.push(`📥 PDF下载: ${pdfDownload === 'success' ? '✅' : '❌'}`);
-      lines.push(`📋 PDF验证: ${pdfValidate === 'success' ? '✅' : '❌'}`);
-      lines.push(`📝 摘要生成: ${pdfSummary === 'success' ? '✅' : '❌'}`);
-
-      const upload = (stages['upload'] as unknown) as Record<string, boolean> | undefined;
-      if (upload) {
-        lines.push('\n📤 上传:');
-        lines.push(`   • HiAgent RAG: ${upload['hiagent_rag'] ? '✅' : '❌'}`);
-        lines.push(`   • LIS-RSS: ${upload['lis_rss'] ? '✅' : '❌'}`);
-        lines.push(`   • Memos: ${upload['memos'] ? '✅' : '❌'}`);
-        lines.push(`   • Blinko: ${upload['blinko'] ? '✅' : '❌'}`);
-        lines.push(`   • 企业微信: ${upload['wechat'] ? '✅' : '❌'}`);
-      }
-
-      if (mdPath) {
-        lines.push(`\n📁 摘要文件: \`${mdPath}\``);
-      }
-    } else {
-      lines.push('\n❌ 失败\n');
-      if (reason) {
-        lines.push(reason);
-      }
-    }
-
-    return lines.join('\n');
   }
 
   private async handleMessage(chatId: number, userId: number, text: string): Promise<void> {
@@ -350,7 +303,7 @@ class PaperTelegramBot {
       const result = await this.callApi(parsed.title, parsed.id, parsed.pushWechat);
       log.info('API returned result', { success: result.success, stages: result.stages });
 
-      const responseText = this.formatResponse(parsed.title, result);
+      const responseText = formatProcessResponse(parsed.title, result);
       await this.sendText(chatId, responseText);
 
     } catch (error) {
@@ -470,7 +423,12 @@ async function main(): Promise<void> {
   await bot.start();
 }
 
-main().catch((error) => {
-  log.error('Fatal error', { error: error instanceof Error ? error.message : String(error) });
-  process.exit(1);
-});
+const currentFilePath = fileURLToPath(import.meta.url);
+const entryFilePath = process.argv[1] ? resolve(process.argv[1]) : '';
+
+if (entryFilePath === currentFilePath) {
+  main().catch((error) => {
+    log.error('Fatal error', { error: error instanceof Error ? error.message : String(error) });
+    process.exit(1);
+  });
+}

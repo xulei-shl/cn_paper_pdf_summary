@@ -70,3 +70,36 @@ class TestNotifierDispatch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["wechat"], True)
         self.assertEqual(mock_send.call_count, 1)
         mock_wechat.assert_awaited_once()
+
+    async def test_dispatch_success_notifications_skip_telegram_log_for_telegram_source(self):
+        config = {
+            "summary_upload": {
+                "wechat": {
+                    "timeout": 30,
+                }
+            }
+        }
+
+        with patch("utils.notifier.get_env_bool") as mock_get_env_bool, \
+             patch("utils.notifier.send_telegram_message", return_value=True) as mock_send, \
+             patch("utils.notifier.upload_to_wechat", new_callable=AsyncMock, return_value=False):
+            mock_get_env_bool.side_effect = lambda name, default=False: {
+                "PDF_SUMMARY_PUSH_TELEGRAM_LOG": True,
+                "PDF_SUMMARY_PUSH_TELEGRAM_RESULT": True,
+                "PDF_SUMMARY_PUSH_WECHAT": False,
+            }.get(name, default)
+
+            result = await dispatch_success_notifications(
+                title="测试标题",
+                article_id=0,
+                source_name="Telegram命令",
+                md_content="这是摘要正文",
+                stages={"pdf_download": "success", "pdf_summary": "success", "upload": {}},
+                config=config,
+                allow_telegram_log=False,
+            )
+
+        self.assertEqual(result["telegram_log"], False)
+        self.assertEqual(result["telegram_result"], True)
+        self.assertEqual(result["wechat"], False)
+        self.assertEqual(mock_send.call_count, 1)

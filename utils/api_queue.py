@@ -65,7 +65,13 @@ class QueueManager:
             raise FileNotFoundError(f"配置文件不存在: {self._config_path}")
         return self._config_path.stat().st_mtime_ns
 
-    async def enqueue(self, title: str, article_id: Optional[int], push_wechat: bool = False) -> str:
+    async def enqueue(
+        self,
+        title: str,
+        article_id: Optional[int],
+        push_wechat: bool = False,
+        request_source: str = "api",
+    ) -> str:
         task_id = str(uuid.uuid4())
         self._ensure_worker()
 
@@ -75,6 +81,7 @@ class QueueManager:
             "title": title,
             "article_id": article_id,
             "push_wechat": push_wechat,
+            "request_source": request_source,
             "status": "queued",
             "result": None
         }
@@ -83,7 +90,8 @@ class QueueManager:
             "task_id": task_id,
             "title": title,
             "article_id": article_id,
-            "push_wechat": push_wechat
+            "push_wechat": push_wechat,
+            "request_source": request_source,
         })
 
         return task_id
@@ -116,7 +124,26 @@ class QueueManager:
             success_count += 1
         return success_count == 0
 
-    def _notify_failure(self, title: str, article_id: int, reason: str, stages: Optional[Dict]) -> None:
+    def _get_source_name(self, request_source: str) -> str:
+        """
+        根据请求来源生成展示名称
+
+        Args:
+            request_source: 请求来源标识
+
+        Returns:
+            来源展示名称
+        """
+        return "Telegram命令" if request_source == "telegram" else "API调用"
+
+    def _notify_failure(
+        self,
+        title: str,
+        article_id: int,
+        reason: str,
+        stages: Optional[Dict],
+        request_source: str,
+    ) -> None:
         """
         发送失败通知
 
@@ -125,18 +152,26 @@ class QueueManager:
             article_id: 文章 ID
             reason: 失败原因
             stages: 阶段状态
+            request_source: 请求来源
         """
         dispatch_error_notification(
             title=title,
             reason=reason,
             article_id=article_id,
-            source_name="API调用",
+            source_name=self._get_source_name(request_source),
             stages=stages,
         )
 
-    async def _process_single_article(self, title: str, article_id: Optional[int], push_wechat: bool = False) -> Dict:
+    async def _process_single_article(
+        self,
+        title: str,
+        article_id: Optional[int],
+        push_wechat: bool = False,
+        request_source: str = "api",
+    ) -> Dict:
         article_id = article_id if article_id else 0
         skip_lis_rss = article_id == 0
+        source_name = self._get_source_name(request_source)
 
         config = self._ensure_config()
         today = datetime.now().strftime("%Y-%m-%d")
@@ -159,7 +194,7 @@ class QueueManager:
 
         if not pdf_path:
             result["reason"] = "PDF下载失败（所有脚本均失败）"
-            self._notify_failure(title, article_id, result["reason"], result["stages"])
+            self._notify_failure(title, article_id, result["reason"], result["stages"], request_source)
             return result
 
         result["stages"]["pdf_download"] = "success"
@@ -175,7 +210,7 @@ class QueueManager:
         if not matched:
             result["stages"]["pdf_validate"] = "failed"
             result["reason"] = f"PDF文件名不匹配: {match_reason}"
-            self._notify_failure(title, article_id, result["reason"], result["stages"])
+            self._notify_failure(title, article_id, result["reason"], result["stages"], request_source)
             return result
 
         result["stages"]["pdf_validate"] = "success"
@@ -185,7 +220,7 @@ class QueueManager:
         if not md_path:
             result["stages"]["pdf_summary"] = "failed"
             result["reason"] = "PDF总结失败"
-            self._notify_failure(title, article_id, result["reason"], result["stages"])
+            self._notify_failure(title, article_id, result["reason"], result["stages"], request_source)
             return result
 
         # 读取MD内容检查是否包含错误信息
@@ -219,7 +254,7 @@ class QueueManager:
             Path(md_path).unlink(missing_ok=True)
             result["stages"]["pdf_summary"] = "failed"
             result["reason"] = reason
-            self._notify_failure(title, article_id, reason, result["stages"])
+            self._notify_failure(title, article_id, reason, result["stages"], request_source)
             return result
 
         result["stages"]["pdf_summary"] = "success"
@@ -230,7 +265,7 @@ class QueueManager:
                 md_path=str(md_path),
                 article_id=article_id,
                 article_title=title,
-                source_name="API调用",
+                source_name=source_name,
                 config=config,
                 skip_lis_rss=skip_lis_rss,
                 skip_wechat=True
@@ -239,7 +274,7 @@ class QueueManager:
         except Exception as e:
             result["stages"]["upload"] = {"error": str(e)}
             result["reason"] = f"上传过程异常: {e}"
-            self._notify_failure(title, article_id, result["reason"], result["stages"])
+            self._notify_failure(title, article_id, result["reason"], result["stages"], request_source)
             return result
 
         is_fully_successful = (
@@ -257,16 +292,17 @@ class QueueManager:
                 "telegram_result": False,
                 "wechat": False,
             }
-            self._notify_failure(title, article_id, result["reason"], result["stages"])
+            self._notify_failure(title, article_id, result["reason"], result["stages"], request_source)
             return result
 
         result["stages"]["notify"] = await dispatch_success_notifications(
             title=title,
             article_id=article_id,
-            source_name="API调用",
+            source_name=source_name,
             md_content=md_content,
             stages=result["stages"],
             config=config,
+            allow_telegram_log=request_source != "telegram",
             allow_wechat=True,
             force_wechat=push_wechat,
         )
@@ -282,11 +318,17 @@ class QueueManager:
                 title = task["title"]
                 article_id = task["article_id"]
                 push_wechat = task.get("push_wechat", False)
+                request_source = task.get("request_source", "api")
 
                 self.results[task_id]["status"] = "running"
 
                 try:
-                    result = await self._process_single_article(title, article_id, push_wechat)
+                    result = await self._process_single_article(
+                        title,
+                        article_id,
+                        push_wechat,
+                        request_source,
+                    )
                     self.results[task_id]["result"] = result
                     self.results[task_id]["status"] = "completed"
                 except Exception as e:
@@ -294,7 +336,13 @@ class QueueManager:
                         "success": False,
                         "reason": f"处理异常: {e}"
                     }
-                    self._notify_failure(title, article_id or 0, f"处理异常: {e}", None)
+                    self._notify_failure(
+                        title,
+                        article_id or 0,
+                        f"处理异常: {e}",
+                        None,
+                        request_source,
+                    )
                     self.results[task_id]["status"] = "failed"
                 finally:
                     if task_id in self.events:

@@ -65,6 +65,11 @@ class ProcessRequest(BaseModel):
         default=False,
         description="是否强制启用本次企业微信成功结果推送。默认 false。",
     )
+    request_source: str = Field(
+        default="api",
+        description="请求来源。telegram 表示 Telegram Bot 场景，其余值按普通 API 处理。",
+        examples=["api", "telegram"],
+    )
 
 
 class UploadStages(BaseModel):
@@ -144,7 +149,12 @@ app.add_middleware(
     description="阻塞执行单篇论文处理流程。支持可选 legacy id 控制 LIS-RSS 上传，并可通过 push_wechat 强制启用本次企业微信成功结果推送。"
 )
 async def process(req: ProcessRequest) -> ProcessResponse:
-    task_id = await queue_manager.enqueue(req.title, req.id, req.push_wechat)
+    task_id = await queue_manager.enqueue(
+        req.title,
+        req.id,
+        req.push_wechat,
+        req.request_source,
+    )
     result = await queue_manager.get_result(task_id)
 
     if "error" in result:

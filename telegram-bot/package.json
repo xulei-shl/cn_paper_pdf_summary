@@ -7,7 +7,7 @@
     "start": "tsx index.ts",
     "dev": "tsx index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test command-parser.test.ts api-config.test.ts"
+    "test": "node --import tsx --test command-parser.test.ts api-config.test.ts response-formatter.test.ts"
   },
   "dependencies": {
     "dotenv": "^17.0.0",

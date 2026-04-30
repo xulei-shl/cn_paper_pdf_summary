@@ -108,9 +108,10 @@ HTTPS_PROXY=http://127.0.0.1:7890
   - 默认不推送成功结果到企业微信
   - Telegram `/papers ... --wechat` 或 API `push_wechat=true` 可强制开启本次推送
 - `PDF_SUMMARY_PUSH_TELEGRAM_LOG`
-  - 控制成功日志是否主动推送到 Telegram
+  - 仅控制 CLI / API 成功日志是否主动推送到 Telegram
+  - 不影响 Telegram Bot `/papers` 的固定结束日志
 - `PDF_SUMMARY_PUSH_TELEGRAM_RESULT`
-  - 控制成功结果正文是否主动推送到 Telegram
+  - 控制所有入口的成功结果正文是否主动推送到 Telegram
 - 错误通知不受上述开关影响
   - 关键失败会默认尝试推送到 Telegram
 
@@ -260,6 +261,18 @@ npm start
 - 标题尾部 `@123` 会被解析为 legacy ID，并触发 LIS-RSS 上传
 - 兼容 `标题 @123` 写法
 - `--wechat` 强制开启本次企业微信成功结果推送
+
+消息行为说明：
+
+- Telegram `/papers` 会固定返回两类会话消息
+  - `📥 开始处理...`
+  - 处理结束日志（成功或失败）
+- `PDF_SUMMARY_PUSH_TELEGRAM_LOG`
+  - 只影响 CLI / API 的成功日志主动推送
+  - 不控制 Telegram `/papers` 的结束日志
+- `PDF_SUMMARY_PUSH_TELEGRAM_RESULT`
+  - 控制是否额外主动推送最终摘要正文
+  - 对 CLI / API / Telegram Bot 三种入口统一生效
 
 ## 实际处理流程
 

@@ -314,6 +314,7 @@ async def dispatch_success_notifications(
     md_content: str,
     stages: Optional[Dict],
     config: Dict,
+    allow_telegram_log: bool = True,
     allow_wechat: bool = True,
     force_wechat: bool = False,
 ) -> Dict[str, bool]:
@@ -327,6 +328,7 @@ async def dispatch_success_notifications(
         md_content: 摘要正文
         stages: 阶段状态
         config: 工作流配置
+        allow_telegram_log: 是否允许发送 Telegram 成功日志
         allow_wechat: 是否允许发送 WeChat
         force_wechat: 是否强制开启 WeChat
 
@@ -339,7 +341,7 @@ async def dispatch_success_notifications(
         "wechat": False,
     }
 
-    if get_env_bool("PDF_SUMMARY_PUSH_TELEGRAM_LOG", False):
+    if allow_telegram_log and get_env_bool("PDF_SUMMARY_PUSH_TELEGRAM_LOG", False):
         results["telegram_log"] = send_telegram_message(
             build_success_log_message(
                 title=title,
@@ -382,6 +384,7 @@ def dispatch_success_notifications_sync(
     md_content: str,
     stages: Optional[Dict],
     config: Dict,
+    allow_telegram_log: bool = True,
     allow_wechat: bool = True,
     force_wechat: bool = False,
 ) -> Dict[str, bool]:
@@ -395,6 +398,7 @@ def dispatch_success_notifications_sync(
         md_content: 摘要正文
         stages: 阶段状态
         config: 工作流配置
+        allow_telegram_log: 是否允许发送 Telegram 成功日志
         allow_wechat: 是否允许发送 WeChat
         force_wechat: 是否强制开启 WeChat
 
@@ -409,6 +413,7 @@ def dispatch_success_notifications_sync(
             md_content=md_content,
             stages=stages,
             config=config,
+            allow_telegram_log=allow_telegram_log,
             allow_wechat=allow_wechat,
             force_wechat=force_wechat,
         )
