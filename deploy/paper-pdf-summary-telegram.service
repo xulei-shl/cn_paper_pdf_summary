@@ -1,0 +1,16 @@
+[Unit]
+Description=Paper PDF Summary Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=xulei
+WorkingDirectory=/opt/lis-rss-daily/scripts/paper-pdf-summary/telegram-bot
+ExecStart=/home/xulei/.nvm/versions/node/v24.14.0/bin/node /opt/lis-rss-daily/scripts/paper-pdf-summary/telegram-bot/node_modules/.bin/tsx /opt/lis-rss-daily/scripts/paper-pdf-summary/telegram-bot/index.ts
+Restart=always
+RestartSec=5
+Environment="PATH=/home/xulei/.nvm/versions/node/v24.14.0/bin"
+EnvironmentFile=/opt/lis-rss-daily/scripts/paper-pdf-summary/.env
+
+[Install]
+WantedBy=multi-user.target

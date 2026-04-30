@@ -1,0 +1,571 @@
+#!/usr/bin/env python3
+"""
+论文PDF摘要工作流 - 主入口
+
+功能：
+1. 直接按标题下载PDF
+2. 验证PDF文件名匹配
+3. 生成PDF总结（MD）
+4. 并行上传到子系统
+5. 发送本地通知
+6. 生成处理报告
+"""
+
+import re
+import sys
+import asyncio
+import argparse
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, Optional
+
+# 添加项目根目录到Python路径
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
+
+from utils.pdf_downloader import create_download_directory, download_pdf
+from utils.pdf_validator import validate_and_cleanup
+from utils.pdf_summarizer import summarize_pdf
+from utils.summary_uploader import upload_all as parallel_upload
+from utils.notifier import (
+    dispatch_error_notification,
+    dispatch_success_notifications_sync,
+)
+from utils.logger import DailyLogger
+import yaml
+
+
+def load_workflow_config(config_path: str = "config/config.yaml") -> Dict:
+    """
+    加载工作流配置
+    
+    Args:
+        config_path: 配置文件路径
+        
+    Returns:
+        配置字典
+    """
+    config_path = Path(config_path)
+    if not config_path.exists():
+        raise FileNotFoundError(f"配置文件不存在: {config_path}")
+    
+    with open(config_path, 'r', encoding='utf-8') as f:
+        return yaml.safe_load(f)
+
+
+def print_section(title: str):
+    """打印分节标题"""
+    print(f"\n{'='*60}")
+    print(f"  {title}")
+    print('='*60)
+
+
+def print_article_info(article: Dict):
+    """打印文章基本信息"""
+    print(f"\n[文章信息]")
+    print(f"  ID: {article.get('id')}")
+    print(f"  标题: {article.get('title', '')[:50]}...")
+    print(f"  来源: {article.get('source_name', '未知')}")
+
+
+def notify_processing_failure(article: Dict, reason: str, stages: Optional[Dict] = None) -> None:
+    """
+    发送处理失败通知
+
+    Args:
+        article: 文章信息
+        reason: 失败原因
+        stages: 流程状态
+    """
+    dispatch_error_notification(
+        title=article.get('title', '未知标题'),
+        reason=reason,
+        article_id=article.get('id'),
+        source_name=article.get('source_name'),
+        stages=stages,
+    )
+
+
+def process_direct_article(title: str, article_id: Optional[int], config: Dict, logger: DailyLogger, today: str, skip_wechat: bool = False, stop_after_summary: bool = False) -> Optional[Dict]:
+    """
+    直接处理指定的文章
+
+    Args:
+        title: 论文题名（PDF下载检索词）
+        article_id: 文章ID（可选），如果未提供则跳过LIS-RSS上传
+        config: 配置字典
+        logger: 日志记录器
+        today: 当日日期字符串
+        skip_wechat: 是否跳过企业微信推送
+        stop_after_summary: 步骤3成功后立即返回，不执行步骤4
+
+    Returns:
+        如果 stop_after_summary=True，返回包含md_content等信息的字典；否则返回None
+    """
+    # 创建当日工作目录
+    download_root = config['storage']['download_root']
+    daily_dir = create_download_directory(download_root, today)
+    print(f"  工作目录: {daily_dir}")
+
+    # 构造文章数据
+    article = {
+        'id': article_id if article_id else 0,
+        'title': title,
+        'source_name': '手动指定'
+    }
+
+    # 决定是否跳过LIS-RSS上传
+    skip_lis_rss = article_id is None
+
+    print(f"\n{'#'*60}")
+    print(f"# 处理直接指定的文章")
+    print('#'*60)
+
+    # 如果只需要步骤3，立即执行并返回
+    if stop_after_summary:
+        return process_article_summary_only(article, config, daily_dir, skip_wechat)
+
+    result = process_article(article, config, daily_dir, logger, skip_lis_rss=skip_lis_rss, skip_wechat=skip_wechat)
+
+    if result['success']:
+        print(f"\n[进度] 成功: 1, 失败: 0")
+    else:
+        print(f"\n[进度] 成功: 0, 失败: 1")
+
+    # 生成最终报告
+    print_section("生成每日报告")
+    report_path = logger.generate_report()
+
+    # 输出摘要
+    print(f"\n{'='*60}")
+    print(f"  处理完成")
+    print('='*60)
+    print(f"  成功: {1 if result['success'] else 0}")
+    print(f"  失败: {1 if not result['success'] else 0}")
+    print(f"  报告: {report_path}")
+    print('='*60)
+
+
+def process_article_summary_only(article: Dict, config: Dict, daily_dir: Path, skip_wechat: bool = False) -> Dict:
+    """
+    仅执行步骤1-3，返回MD内容用于立即推送
+
+    Args:
+        article: 文章数据
+        config: 配置字典
+        daily_dir: 当日工作目录
+        skip_wechat: 是否跳过企业微信推送
+
+    Returns:
+        包含 md_path, md_content, article_id, title 等信息的字典
+    """
+    article_id = article['id']
+    title = article['title']
+
+    print_article_info(article)
+
+    result = {
+        'article_id': article_id,
+        'title': title,
+        'success': False,
+        'md_path': None,
+        'md_content': None,
+        'skip_wechat': skip_wechat,
+        'stages': {}
+    }
+
+    # ===== 步骤1: PDF下载 =====
+    print_section("步骤1: PDF下载")
+
+    pdf_path = download_pdf(
+        title=title,
+        output_dir=str(daily_dir),
+        config=config
+    )
+
+    if not pdf_path:
+        reason = "PDF下载失败（所有脚本均失败）"
+        print(f"[失败] {reason}")
+        result['reason'] = reason
+        notify_processing_failure(article, reason, result['stages'])
+        return result
+
+    result['stages']['pdf_download'] = 'success'
+    print(f"[成功] PDF已下载: {pdf_path}")
+
+    # ===== 步骤2: 验证PDF文件名匹配 =====
+    print_section("步骤2: 验证PDF文件名匹配")
+
+    threshold = config.get('pdf_download', {}).get('match_threshold', 0)
+    matched, match_reason = validate_and_cleanup(
+        pdf_path=pdf_path,
+        original_title=title,
+        threshold=threshold,
+        delete_on_mismatch=True
+    )
+
+    if not matched:
+        reason = f"PDF文件名不匹配: {match_reason}"
+        print(f"[失败] {reason}")
+        result['stages']['pdf_validate'] = 'failed'
+        result['reason'] = reason
+        notify_processing_failure(article, reason, result['stages'])
+        return result
+
+    result['stages']['pdf_validate'] = 'success'
+    print(f"[成功] PDF验证通过")
+
+    # ===== 步骤3: PDF总结 =====
+    print_section("步骤3: PDF总结")
+
+    md_path = summarize_pdf(pdf_path, config)
+
+    if not md_path:
+        reason = "PDF总结失败"
+        print(f"[失败] {reason}")
+        result['stages']['pdf_summary'] = 'failed'
+        result['reason'] = reason
+        notify_processing_failure(article, reason, result['stages'])
+        return result
+
+    md_content = ""
+    if Path(md_path).exists():
+        md_content = Path(md_path).read_text(encoding='utf-8')
+
+    error_patterns = [
+        r'无法完成',
+        r'无法正常',
+        r'No /Root object',
+        r'Is this really a PDF',
+        r'文件链接无法正常访问',
+        r'文件格式异常',
+        r'链接无效',
+        r'格式异常',
+        r'PDF.*?异常',
+        r'处理失败',
+        r'调用失败',
+        r'抱歉.*?无法.*?',
+        r'对不起.*?无法.*?',
+        r'请求异常',
+        r'稍后重试',
+        r'请稍后重试'
+    ]
+    has_error = any(re.search(p, md_content, re.IGNORECASE) for p in error_patterns)
+    if has_error:
+        reason = "PDF总结失败（生成的摘要包含错误信息，可能是PDF损坏或无法读取）"
+        print(f"[失败] {reason}")
+        print(f"[删除] 删除无效MD文件: {md_path}")
+        Path(md_path).unlink(missing_ok=True)
+        result['stages']['pdf_summary'] = 'failed'
+        result['reason'] = reason
+        notify_processing_failure(article, reason, result['stages'])
+        return result
+
+    result['stages']['pdf_summary'] = 'success'
+    result['md_path'] = str(md_path)
+    print(f"[成功] MD文件已生成: {md_path}")
+
+    result['md_content'] = md_content
+    result['success'] = True
+
+    print(f"[完成] 步骤3成功，MD内容已准备好（{len(md_content)} 字符）")
+    print(f"[提示] 步骤4上传将在后台继续执行...")
+
+    return result
+
+
+def _is_all_upload_failed(upload_results: Optional[Dict]) -> bool:
+    """
+    判断并行上传是否全部失败
+    
+    个别并行任务失败无所谓，但如果全部任务都失败则返回True
+    注意：被跳过的任务不计入失败判断
+    
+    Args:
+        upload_results: 上传结果字典，包含 hiagent_rag, lis_rss, memos, wechat 的布尔值，
+                       以及 _skipped 列表记录被跳过的子系统
+        
+    Returns:
+        如果全部实际执行的任务都失败，返回True；否则返回False
+    """
+    if not upload_results:
+        return True
+    
+    # 获取被跳过的子系统列表
+    skipped = upload_results.get('_skipped', [])
+    
+    # 统计实际执行的任务中成功的数量
+    success_count = 0
+    
+    # HiAgent RAG - 总是执行
+    if 'hiagent_rag' not in skipped and upload_results.get('hiagent_rag', False):
+        success_count += 1
+    
+    # LIS-RSS
+    if 'lis_rss' not in skipped and upload_results.get('lis_rss', False):
+        success_count += 1
+    
+    # Memos - 总是执行
+    if 'memos' not in skipped and upload_results.get('memos', False):
+        success_count += 1
+    
+    # WeChat
+    if 'wechat' not in skipped and upload_results.get('wechat', False):
+        success_count += 1
+    
+    # 如果没有任何任务成功，才算全部失败
+    return success_count == 0
+
+
+def process_article(article: Dict, config: Dict, daily_dir: Path, logger: DailyLogger, skip_lis_rss: bool = False, skip_wechat: bool = False) -> Dict:
+    """
+    处理单篇文章
+    
+    处理流程：
+    1. 下载PDF（按优先级尝试多个脚本）
+    2. 验证PDF文件名匹配
+    3. 生成PDF总结（MD）
+    4. 并行上传到子系统（包含LIS-RSS数据库更新，可跳过）
+    5. 调用本地通知分发器发送 Telegram / WeChat 通知
+    
+    Args:
+        article: 文章数据
+        config: 配置字典
+        daily_dir: 当日工作目录
+        logger: 日志记录器
+        
+    Returns:
+        处理结果字典
+    """
+    article_id = article['id']
+    title = article['title']
+    source_name = article.get('source_name')
+    
+    print_article_info(article)
+    
+    result = {
+        'article_id': article_id,
+        'title': title,
+        'success': False,
+        'stages': {}
+    }
+    
+    # ===== 步骤1: PDF下载 =====
+    print_section("步骤1: PDF下载")
+    
+    pdf_path = download_pdf(
+        title=title,
+        output_dir=str(daily_dir),
+        config=config
+    )
+    
+    if not pdf_path:
+        reason = "PDF下载失败（所有脚本均失败）"
+        print(f"[失败] {reason}")
+        logger.log_failure(article, reason)
+        result['reason'] = reason
+        notify_processing_failure(article, reason, result['stages'])
+        return result
+    
+    result['stages']['pdf_download'] = 'success'
+    print(f"[成功] PDF已下载: {pdf_path}")
+    
+    # ===== 步骤2: 验证PDF文件名匹配 =====
+    print_section("步骤2: 验证PDF文件名匹配")
+    
+    threshold = config.get('pdf_download', {}).get('match_threshold', 0)
+    matched, match_reason = validate_and_cleanup(
+        pdf_path=pdf_path,
+        original_title=title,
+        threshold=threshold,
+        delete_on_mismatch=True
+    )
+    
+    if not matched:
+        reason = f"PDF文件名不匹配: {match_reason}"
+        print(f"[失败] {reason}")
+        logger.log_failure(article, reason)
+        result['stages']['pdf_validate'] = 'failed'
+        result['reason'] = reason
+        notify_processing_failure(article, reason, result['stages'])
+        return result
+    
+    result['stages']['pdf_validate'] = 'success'
+    print(f"[成功] PDF验证通过")
+    
+    # ===== 步骤3: PDF总结 =====
+    print_section("步骤3: PDF总结")
+    
+    md_path = summarize_pdf(pdf_path, config)
+    
+    if not md_path:
+        reason = "PDF总结失败"
+        print(f"[失败] {reason}")
+        logger.log_failure(article, reason)
+        result['stages']['pdf_summary'] = 'failed'
+        result['reason'] = reason
+        notify_processing_failure(article, reason, result['stages'])
+        return result
+    
+    md_content = ""
+    if Path(md_path).exists():
+        md_content = Path(md_path).read_text(encoding='utf-8')
+    
+    error_patterns = [
+        r'无法完成',
+        r'无法正常',
+        r'No /Root object',
+        r'Is this really a PDF',
+        r'文件链接无法正常访问',
+        r'文件格式异常',
+        r'链接无效',
+        r'格式异常',
+        r'PDF.*?异常',
+        r'处理失败',
+        r'调用失败',
+        r'抱歉.*?无法.*?',
+        r'对不起.*?无法.*?',
+        r'请求异常',
+        r'稍后重试',
+        r'请稍后重试'
+    ]
+    has_error = any(re.search(p, md_content, re.IGNORECASE) for p in error_patterns)
+    if has_error:
+        reason = "PDF总结失败（生成的摘要包含错误信息，可能是PDF损坏或无法读取）"
+        print(f"[失败] {reason}")
+        print(f"[删除] 删除无效MD文件: {md_path}")
+        Path(md_path).unlink(missing_ok=True)
+        logger.log_failure(article, reason)
+        result['stages']['pdf_summary'] = 'failed'
+        result['reason'] = reason
+        notify_processing_failure(article, reason, result['stages'])
+        return result
+    
+    result['stages']['pdf_summary'] = 'success'
+    result['md_path'] = md_path
+    print(f"[成功] MD文件已生成: {md_path}")
+    
+    # ===== 步骤4: 并行上传 =====
+    print_section("步骤4: 并行上传到子系统")
+
+    try:
+        upload_results = asyncio.run(parallel_upload(
+            md_path=md_path,
+            article_id=article_id,
+            article_title=title,
+            source_name=source_name,
+            config=config,
+            skip_lis_rss=skip_lis_rss,
+            skip_wechat=True
+        ))
+        
+        result['stages']['upload'] = upload_results
+        print(f"[结果] 上传结果: {upload_results}")
+        
+    except Exception as e:
+        reason = f"上传过程异常: {e}"
+        print(f"[失败] {reason}")
+        logger.log_failure(article, reason)
+        result['stages']['upload'] = {'error': str(e)}
+        result['reason'] = reason
+        notify_processing_failure(article, reason, result['stages'])
+        return result
+
+    if _is_all_upload_failed(upload_results):
+        reason = "所有上传任务均失败"
+        print(f"[失败] {reason}")
+        logger.log_failure(article, reason)
+        result['reason'] = reason
+        result['stages']['notify'] = {
+            'telegram_log': False,
+            'telegram_result': False,
+            'wechat': False
+        }
+        notify_processing_failure(article, reason, result['stages'])
+        return result
+
+    print_section("步骤5: 本地通知分发")
+    result['stages']['notify'] = dispatch_success_notifications_sync(
+        title=title,
+        article_id=article_id,
+        source_name=source_name,
+        md_content=md_content,
+        stages=result['stages'],
+        config=config,
+        allow_wechat=not skip_wechat,
+        force_wechat=False
+    )
+    print(f"[结果] 通知结果: {result['stages']['notify']}")
+
+    # ===== 完成 =====
+    result['success'] = True
+    print_section("处理完成")
+    logger.log_success(article)
+    
+    return result
+
+
+def main():
+    """主入口函数"""
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description='论文PDF摘要工作流')
+    parser.add_argument('--title', required=True, help='论文题名（PDF下载检索词）')
+    parser.add_argument('--id', type=int, help='文章ID（可选，跳过LIS-RSS上传如果未提供）')
+    parser.add_argument('--skip-wechat', action='store_true', help='跳过企业微信结果推送')
+    parser.add_argument('--stop-after-summary', action='store_true', help='步骤3成功后立即返回，不执行步骤4上传')
+    args = parser.parse_args()
+
+    print_section("论文PDF摘要工作流启动")
+
+    # 加载配置
+    print("[加载配置...]")
+    config = load_workflow_config()
+
+    # 获取当日日期
+    today = datetime.now().strftime("%Y-%m-%d")
+    print(f"  处理日期: {today}")
+
+    # 初始化日志
+    logs_root = config['storage']['logs_root']
+    logger = DailyLogger(today, logs_root)
+    print(f"  日志文件: {logger.log_file}")
+
+    print(f"\n[模式] 单篇直连模式")
+    print(f"  题名: {args.title}")
+    print(f"  文章ID: {args.id if args.id else '未提供（将跳过LIS-RSS上传）'}")
+    print(f"  跳过微信: {'是' if args.skip_wechat else '否'}")
+    print(f"  立即返回（步骤3后）: {'是' if args.stop_after_summary else '否'}")
+    
+    summary_result = process_direct_article(
+        args.title, args.id, config, logger, today,
+        skip_wechat=args.skip_wechat,
+        stop_after_summary=args.stop_after_summary
+    )
+    
+    # 如果是 stop_after_summary 模式，步骤3成功后立即返回
+    if args.stop_after_summary and summary_result:
+        if summary_result.get('success'):
+            md_path = summary_result.get('md_path')
+            if md_path:
+                md_path = str(Path(md_path).resolve())
+            print("\n" + "="*60)
+            print(f"SUMMARY_SUCCESS|{md_path}|{summary_result.get('article_id')}|{summary_result.get('title')}")
+            print("="*60)
+        return
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n[中断] 用户取消执行")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n[错误] {e}")
+        dispatch_error_notification(
+            title="主程序异常",
+            reason=str(e),
+        )
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
