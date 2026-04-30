@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>cn_paper_pdf_summary 宣传页</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=Outfit:wght@400;600&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            /* New Color Palette based on #4e204c */
+            --primary: #4e204c;
+            --primary-soft: oklch(0.65 0.12 320);
+            --bg-color: oklch(0.98 0.01 320);
+            --text-main: #1D1D1F;
+            --text-sub: #555555;
+            --border: rgba(78, 32, 76, 0.1);
+            --space-m: 24px;
+            --space-l: 48px;
+            --radius: 32px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #ECECEC;
+            font-family: 'Outfit', 'Noto Sans SC', sans-serif;
+            color: var(--text-main);
+            padding: 60px 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .card {
+            width: 800px;
+            height: 1066px;
+            background: var(--bg-color);
+            border-radius: var(--radius);
+            padding: 80px 70px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 40px 100px rgba(78, 32, 76, 0.1), 0 10px 30px rgba(0, 0, 0, 0.05);
+            position: relative;
+            overflow: hidden;
+            border: 1px solid white;
+        }
+
+        /* Subtle Purple Glows */
+        .card::before {
+            content: '';
+            position: absolute;
+            top: -150px;
+            right: -150px;
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(78, 32, 76, 0.08) 0%, transparent 70%);
+            z-index: 0;
+        }
+
+        .content {
+            position: relative;
+            z-index: 1;
+        }
+
+        .tag {
+            font-size: 13px;
+            letter-spacing: 0.15em;
+            color: var(--primary);
+            border-bottom: 2px solid var(--primary);
+            padding-bottom: 4px;
+            display: inline-block;
+            margin-bottom: 30px;
+            font-weight: 600;
+        }
+
+        h1 {
+            font-size: 46px;
+            font-weight: 600;
+            line-height: 1.2;
+            margin-bottom: 24px;
+            color: var(--primary);
+        }
+
+        .desc {
+            font-size: 18px;
+            line-height: 1.6;
+            color: var(--text-sub);
+            margin-bottom: 60px;
+        }
+
+        /* Unified Workflow Visualization */
+        .visual-area {
+            position: relative;
+            background: white;
+            padding: 30px;
+            border-radius: 20px;
+            border: 1px solid var(--border);
+            margin-bottom: 60px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .node {
+            font-size: 15px;
+            color: var(--primary);
+            font-weight: 500;
+        }
+
+        .arrow {
+            height: 1px;
+            background: var(--border);
+            flex-grow: 1;
+            margin: 0 15px;
+            position: relative;
+        }
+
+        .arrow::after {
+            content: '';
+            position: absolute;
+            right: 0;
+            top: -3.5px;
+            width: 8px;
+            height: 8px;
+            border-top: 1.5px solid var(--border);
+            border-right: 1.5px solid var(--border);
+            transform: rotate(45deg);
+        }
+
+        /* Refined Features List */
+        .step-list {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .step-item {
+            display: flex;
+            gap: 20px;
+            padding: 24px;
+            background: rgba(255, 255, 255, 0.6);
+            border-radius: 16px;
+            border: 1px solid var(--border);
+        }
+
+        .step-icon {
+            width: 32px;
+            height: 32px;
+            background: var(--primary);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+
+        .step-info h3 {
+            font-size: 18px;
+            color: var(--primary);
+            margin-bottom: 6px;
+        }
+
+        .step-info p {
+            font-size: 15px;
+            color: var(--text-sub);
+            line-height: 1.6;
+        }
+
+        .footer {
+            margin-top: auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 30px;
+            border-top: 1px solid var(--border);
+            font-size: 14px;
+            color: var(--primary);
+            opacity: 0.7;
+            font-weight: 500;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="card" id="main-card">
+        <div class="content">
+            <span class="tag">OPEN SOURCE WORKFLOW</span>
+            <h1>一键论文总结<br>全自动推送保存</h1>
+            <p class="desc">专为科研人员打造。只需输入标题，即可完成从下载、AI 总结到多端备份的全流程自动化处理。</p>
+        </div>
+
+        <div class="visual-area" style="margin-bottom: 20px;">
+            <div class="node">输入标题</div>
+            <div class="arrow"></div>
+            <div class="node">AI 总结</div>
+            <div class="arrow"></div>
+            <div class="node">全端自动化</div>
+        </div>
+        <p
+            style="text-align: center; font-size: 14px; color: var(--primary); opacity: 0.6; margin-bottom: 40px; font-weight: 500;">
+            模块化架构：所有组件均可按需配置、自由替换或独立启用
+        </p>
+
+        <div class="step-list">
+            <div class="step-item">
+                <div class="step-icon">1</div>
+                <div class="step-info">
+                    <h3>多源 PDF 下载</h3>
+                    <p>按优先级尝试万方、知网、哲社科等下载脚本，支持自由扩展脚本路径。</p>
+                </div>
+            </div>
+            <div class="step-item">
+                <div class="step-icon">2</div>
+                <div class="step-info">
+                    <h3>AI 摘要生成</h3>
+                    <p>利用 HiAgent 等脚本全自动转为 Markdown 格式，摘要结果可配置删除 PDF 原文件。</p>
+                </div>
+            </div>
+            <div class="step-item">
+                <div class="step-icon">3</div>
+                <div class="step-info">
+                    <h3>多端同步与通知</h3>
+                    <p>并行保存至 Memos、Blinko、LIS-RSS；即时推送到 Telegram 与企业微信。</p>
+                </div>
+            </div>
+        </div>
+
+        <footer class="footer">
+            <span>cn_paper_pdf_summary</span>
+            <span>github.com/xulei-shl/cn_paper_pdf_summary</span>
+        </footer>
+    </div>
+
+</body>
+
+</html>
